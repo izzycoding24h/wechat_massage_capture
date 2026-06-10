@@ -21,4 +21,5 @@ _tmp/
 *.zip
 dist/
 build/
+installer-output/
 *.egg-info/

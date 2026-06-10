@@ -4,16 +4,9 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 from pathlib import Path
 
-
-def hash_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+from capture_core import verify_evidence_dir
 
 
 def parse_args() -> argparse.Namespace:
@@ -25,38 +18,10 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     evidence_dir = Path(args.evidence_dir).expanduser().resolve()
-    sums_path = evidence_dir / "sha256sums.txt"
-    if not sums_path.exists():
-        print(f"ERROR: Missing {sums_path}")
-        return 2
-
-    checked = 0
-    failures: list[str] = []
-    listed_paths: set[Path] = set()
-    for line_number, raw_line in enumerate(sums_path.read_text(encoding="utf-8").splitlines(), start=1):
-        line = raw_line.strip()
-        if not line:
-            continue
-        if "  " not in line:
-            failures.append(f"line {line_number}: malformed entry")
-            continue
-        expected, relpath = line.split("  ", 1)
-        target = evidence_dir / relpath
-        listed_paths.add(target.resolve())
-        if not target.exists():
-            failures.append(f"{relpath}: missing")
-            continue
-        actual = hash_file(target)
-        checked += 1
-        if actual.lower() != expected.lower():
-            failures.append(f"{relpath}: hash mismatch expected={expected} actual={actual}")
-
-    current_files = {
-        p.resolve()
-        for p in evidence_dir.rglob("*")
-        if p.is_file() and p.name != "sha256sums.txt" and "_tmp" not in p.relative_to(evidence_dir).parts
-    }
-    extras = sorted(current_files - listed_paths)
+    result = verify_evidence_dir(evidence_dir)
+    checked = result["checked"]
+    failures = result["failures"]
+    extras = result["extras"]
 
     if failures:
         print("FAILED")
@@ -70,8 +35,8 @@ def main() -> int:
     print(f"OK: verified {checked} file(s).")
     if extras:
         print(f"WARNING: {len(extras)} extra file(s) are not listed in sha256sums.txt.")
-        for path in extras[:20]:
-            print(f"  extra: {path.relative_to(evidence_dir).as_posix()}")
+        for relpath in extras[:20]:
+            print(f"  extra: {relpath}")
         if len(extras) > 20:
             print("  ...")
     return 0

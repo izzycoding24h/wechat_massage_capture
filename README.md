@@ -15,16 +15,55 @@
 2. 把本文件夹复制到取证电脑。
 3. 双击 `SETUP-WINDOWS.bat` 安装依赖。
 
+## 推荐：桌面应用
+
+源码运行桌面版：
+
+1. 双击 `SETUP-WINDOWS.bat` 安装依赖。
+2. 双击 `RUN-DESKTOP.bat` 打开桌面应用。
+3. 在 `准备` 页面输入群名、起止日期和截图保存目录。
+4. 在 `校准测试` 页面调整 `重叠比例`、`固定步数`、`每步滚轮力度`、`截图间隔秒`，先运行校准测试。
+5. 确认 before/after 重叠合适后，点击 `保存当前配置`。
+6. 在 `正式采集` 页面点击 `开始正式采集`。
+
+正式采集时微信窗口会反复置前、点击和滚动，所以不要依赖鼠标切回桌面应用停止。主停止方式是全局快捷键：
+
+```text
+Ctrl+Alt+S
+```
+
+看到聊天内容滚动到起始日期附近时，按 `Ctrl+Alt+S` 停止。界面里的 `辅助停止` 按钮只是兜底。
+
+桌面版默认值：
+
+- `结束日期`：运行当天。
+- `起始日期`：运行当天往前推 3 个自然月，例如 `2026-06-10` 默认 `2026-03-10`。
+- `重叠比例`：`0.35`。
+- `固定步数`：`8`。
+- `每步滚轮力度`：`100`。
+- `截图间隔秒`：`0.2`。
+
+Windows 打包：
+
+1. 在 Windows 上运行 `build_windows.ps1`，生成 `dist\WechatMessageCapture\WechatMessageCapture.exe`。
+2. 安装 Inno Setup。
+3. 打开 `installer\WechatMessageCapture.iss` 并编译，生成安装包。
+
 ## 项目结构
 
 - `capture_wechat_group.py`：主程序，负责窗口截图、滚动、去重、清单和哈希。
+- `capture_core.py`：桌面版和 CLI 共用的采集核心服务。
+- `desktop_app.py`：PySide6 桌面应用入口。
 - `verify_hashes.py`：复验输出目录里的 `sha256sums.txt`。
 - `SETUP-WINDOWS.bat`：Windows 一键创建虚拟环境并安装依赖。
+- `RUN-DESKTOP.bat`：源码环境下启动桌面应用。
 - `RUN-WINDOWS.bat`：正式采集入口。
 - `RUN-SAMPLE-30.bat`：最多保留 30 张截图的样本入口。
 - `RUN-SCROLL-TEST.bat`：只测试一次滚动和重叠估算。
 - `RUN-DIAGNOSTICS.bat`：只测试截图后端，排查黑屏。
 - `VERIFY-WINDOWS.bat`：Windows 复验哈希入口。
+- `build_windows.ps1`：PyInstaller 打包脚本。
+- `installer/WechatMessageCapture.iss`：Inno Setup 安装包脚本。
 - `requirements.txt` / `pyproject.toml`：依赖和项目元数据。
 
 ## 先跑样本
