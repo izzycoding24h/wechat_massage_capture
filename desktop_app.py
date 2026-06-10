@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QDate, QObject, QSize, Qt, QThread, QUrl, Signal, Slot
-from PySide6.QtGui import QDesktopServices, QFont, QPixmap
+from PySide6.QtGui import QDesktopServices, QFont, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -62,6 +62,12 @@ from capture_core import (
 
 APP_NAME = "WechatMessageCapture"
 SETTINGS_FILE = "settings.json"
+APP_ICON_PATH = "assets/app.ico"
+
+
+def resource_path(relative_path: str) -> str:
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+    return str(base / relative_path)
 
 
 def app_data_dir() -> Path:
@@ -137,6 +143,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("微信截图取证工具")
+        self.setWindowIcon(QIcon(resource_path(APP_ICON_PATH)))
         self.resize(1180, 760)
         self.settings = read_settings()
         self.last_scroll_result: dict[str, Any] | None = None

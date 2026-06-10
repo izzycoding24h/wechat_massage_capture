@@ -38,6 +38,8 @@ if (Test-Path "dist\WechatMessageCapture") {
   --windowed `
   --onedir `
   --name WechatMessageCapture `
+  --icon "assets\app.ico" `
+  --add-data "assets\app.ico;assets" `
   --add-data "README.md;." `
   --add-data "LICENSE;." `
   desktop_app.py
