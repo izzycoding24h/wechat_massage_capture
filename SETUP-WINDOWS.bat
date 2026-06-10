@@ -19,8 +19,10 @@ if %ERRORLEVEL% NEQ 0 (
 )
 
 call ".venv\Scripts\activate.bat"
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
+if "%PIP_INDEX_URL%"=="" set "PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple"
+echo Using pip index: %PIP_INDEX_URL%
+python -m pip install -i "%PIP_INDEX_URL%" --upgrade pip
+python -m pip install -i "%PIP_INDEX_URL%" -r requirements.txt
 if %ERRORLEVEL% NEQ 0 (
   echo Dependency installation failed.
   pause

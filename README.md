@@ -9,7 +9,31 @@
 - 脚本不会自动识别聊天日期。请先把聊天窗口放在要截取的最新位置；看到最早起始日期时，按 `Ctrl+Alt+S` 停止。
 - 尽量在取证电脑上停止微信自动清理、不要删消息、不要切换账号、不要修改群名备注。
 
-## 安装
+## 普通用户安装
+
+普通用户不需要安装 Python，也不需要运行 `SETUP-WINDOWS.bat`。请在一台网络正常的构建电脑上先完成打包，然后把安装包发给用户。
+
+推荐分发文件：
+
+```text
+installer-output\WechatMessageCaptureSetup-1.5.0.exe
+```
+
+这个安装包会包含 Python 运行时和项目依赖，用户只需要双击安装并启动 `微信截图取证工具`。
+
+如果暂时不做安装包，也可以把下面整个目录压缩发给用户：
+
+```text
+dist\WechatMessageCapture\
+```
+
+用户解压后双击：
+
+```text
+WechatMessageCapture.exe
+```
+
+## 源码安装
 
 1. 在 Windows 10/11 电脑安装 Python 3.10 或更新版本。
 2. 把本文件夹复制到取证电脑。
@@ -43,11 +67,25 @@ Ctrl+Alt+S
 - `每步滚轮力度`：`100`。
 - `截图间隔秒`：`0.2`。
 
-Windows 打包：
+Windows 打包，在构建电脑上执行一次即可：
 
-1. 在 Windows 上运行 `build_windows.ps1`，生成 `dist\WechatMessageCapture\WechatMessageCapture.exe`。
+1. 在 Windows 上运行 `build_windows.ps1`，生成 `dist\WechatMessageCapture\WechatMessageCapture.exe`。脚本默认使用清华 PyPI 镜像，避免 PySide6 下载过慢。
 2. 安装 Inno Setup。
 3. 打开 `installer\WechatMessageCapture.iss` 并编译，生成安装包。
+
+如果下载依然很慢，可以换镜像：
+
+```powershell
+.\build_windows.ps1 -PipIndexUrl https://mirrors.aliyun.com/pypi/simple/
+```
+
+如果你明确想使用官方 PyPI：
+
+```powershell
+.\build_windows.ps1 -NoMirror
+```
+
+`PySide6` 依赖较大，尤其是 `pyside6_addons`。这只需要在构建电脑下载一次；打包后的安装包会包含 Python 运行时和依赖，普通用户不需要下载。
 
 ## 项目结构
 
