@@ -1708,6 +1708,7 @@ def run_from_args(
         previous_saved_relpath = ""
         consecutive_duplicates = 0
         saved_index = 0
+        saved_screenshot_bytes = 0
         attempt = 0
         locked_adaptive_steps: int | None = args.adaptive_fixed_steps if args.adaptive_fixed_steps > 0 else None
 
@@ -1784,6 +1785,8 @@ def run_from_args(
                 capture_dir.mkdir(parents=True, exist_ok=True)
                 capture_path = capture_dir / f"{saved_index:06d}.png"
                 tmp_path.replace(capture_path)
+                saved_size_bytes = capture_path.stat().st_size
+                saved_screenshot_bytes += saved_size_bytes
                 current_capture_path = capture_path
                 relpath = relative_to_output(capture_path, output_dir)
                 previous_signature = signature
@@ -1817,6 +1820,8 @@ def run_from_args(
                     "screenshot_saved",
                     f"Saved screenshot {saved_index}.",
                     saved_index=saved_index,
+                    saved_size_bytes=saved_size_bytes,
+                    total_saved_size_bytes=saved_screenshot_bytes,
                     relative_path=relpath,
                     output_dir=str(output_dir),
                 )

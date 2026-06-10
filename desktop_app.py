@@ -305,20 +305,17 @@ class MainWindow(QMainWindow):
         intro.setWordWrap(True)
         page.layout().addWidget(intro)
 
-        grid = QGridLayout()
-        grid.setHorizontalSpacing(16)
-        grid.setVerticalSpacing(16)
-
         params = self._section("常用参数")
         form = QFormLayout(params)
         form.setHorizontalSpacing(16)
         form.setVerticalSpacing(12)
+        form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         self.target_overlap = QSpinBox()
         self.target_overlap.setRange(20, 90)
         self.target_overlap.setSingleStep(5)
         self.target_overlap.setSuffix("%")
         self.target_overlap.setValue(35)
-        self._add_form_row_with_hint(
+        self._add_form_row_with_side_hint(
             form,
             "重叠比例",
             self.target_overlap,
@@ -328,7 +325,7 @@ class MainWindow(QMainWindow):
         self.adaptive_fixed_steps = QSpinBox()
         self.adaptive_fixed_steps.setRange(0, 30)
         self.adaptive_fixed_steps.setValue(8)
-        self._add_form_row_with_hint(
+        self._add_form_row_with_side_hint(
             form,
             "固定步数",
             self.adaptive_fixed_steps,
@@ -339,7 +336,7 @@ class MainWindow(QMainWindow):
         self.adaptive_step_clicks.setRange(-300, 300)
         self.adaptive_step_clicks.setSingleStep(10)
         self.adaptive_step_clicks.setValue(100)
-        self._add_form_row_with_hint(
+        self._add_form_row_with_side_hint(
             form,
             "每步滚轮力度",
             self.adaptive_step_clicks,
@@ -352,32 +349,39 @@ class MainWindow(QMainWindow):
         self.interval.setDecimals(2)
         self.interval.setValue(0.2)
         self.interval.setSuffix(" 秒")
-        self._add_form_row_with_hint(
+        self._add_form_row_with_side_hint(
             form,
             "截图间隔（单位：秒）",
             self.interval,
             "每次滚动后等待微信界面稳定再截图。太低可能截到未刷新画面，最低 0.05 秒，建议从 0.2 秒开始。",
         )
-        grid.addWidget(params, 0, 0)
+        page.layout().addWidget(params)
 
         advanced = QGroupBox("高级参数")
         advanced.setCheckable(True)
         advanced.setChecked(False)
-        advanced_layout = QFormLayout(advanced)
+        advanced_layout = QVBoxLayout(advanced)
+        advanced_layout.setContentsMargins(14, 18, 14, 14)
+        self.advanced_params_content = QWidget()
+        advanced_layout.addWidget(self.advanced_params_content)
+        advanced_form = QFormLayout(self.advanced_params_content)
+        advanced_form.setHorizontalSpacing(16)
+        advanced_form.setVerticalSpacing(12)
+        advanced_form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         self.capture_method = QComboBox()
         self.capture_method.addItems(("auto", *CAPTURE_METHODS))
-        self._add_form_row_with_hint(
-            advanced_layout,
+        self._add_form_row_with_side_hint(
+            advanced_form,
             "截图方式",
             self.capture_method,
-            "auto 会自动尝试多种截图方式；只有诊断发现某种方式稳定正常时再固定指定。",
+            "auto：自动尝试并选择可用方式；imagegrab：系统截图，通常优先；pyautogui：通用截图，兼容性较好；mss-full：截全屏后裁切，适合多屏排查；mss-window：按窗口区域截图，部分电脑可能黑屏。",
         )
 
         self.scroll_mode = QComboBox()
         self.scroll_mode.addItems(SCROLL_MODES)
         self.scroll_mode.setCurrentText("adaptive")
-        self._add_form_row_with_hint(
-            advanced_layout,
+        self._add_form_row_with_side_hint(
+            advanced_form,
             "滚动模式",
             self.scroll_mode,
             "adaptive 会按重叠目标控制滚动；wheel、pageup、drag 主要用于排查，可能跳动更大。",
@@ -388,8 +392,8 @@ class MainWindow(QMainWindow):
         self.scroll_x_ratio.setSingleStep(0.01)
         self.scroll_x_ratio.setDecimals(2)
         self.scroll_x_ratio.setValue(0.68)
-        self._add_form_row_with_hint(
-            advanced_layout,
+        self._add_form_row_with_side_hint(
+            advanced_form,
             "滚动 X 比例",
             self.scroll_x_ratio,
             "点击和滚动位置的横向比例。滚不到聊天区时调整，数值越大越靠窗口右侧。",
@@ -400,8 +404,8 @@ class MainWindow(QMainWindow):
         self.scroll_y_ratio.setSingleStep(0.01)
         self.scroll_y_ratio.setDecimals(2)
         self.scroll_y_ratio.setValue(0.55)
-        self._add_form_row_with_hint(
-            advanced_layout,
+        self._add_form_row_with_side_hint(
+            advanced_form,
             "滚动 Y 比例",
             self.scroll_y_ratio,
             "点击和滚动位置的纵向比例。滚动没有生效时调整，让鼠标落在聊天内容区域。",
@@ -412,8 +416,8 @@ class MainWindow(QMainWindow):
         self.duplicate_threshold.setSingleStep(0.001)
         self.duplicate_threshold.setDecimals(3)
         self.duplicate_threshold.setValue(0.003)
-        self._add_form_row_with_hint(
-            advanced_layout,
+        self._add_form_row_with_side_hint(
+            advanced_form,
             "重复阈值",
             self.duplicate_threshold,
             "判断两张图是否几乎相同。越高越容易判重复并停止，越低会保留更多近似截图。",
@@ -422,15 +426,15 @@ class MainWindow(QMainWindow):
         self.stable_limit = QSpinBox()
         self.stable_limit.setRange(0, 100)
         self.stable_limit.setValue(8)
-        self._add_form_row_with_hint(
-            advanced_layout,
+        self._add_form_row_with_side_hint(
+            advanced_form,
             "稳定停止次数",
             self.stable_limit,
             "连续多次画面变化很小时自动结束。太低可能提前停止，太高会多做重复尝试。",
         )
-        grid.addWidget(advanced, 0, 1)
-
-        page.layout().addLayout(grid)
+        self.advanced_params_content.setVisible(False)
+        advanced.toggled.connect(self._set_advanced_params_visible)
+        page.layout().addWidget(advanced)
 
         actions = QHBoxLayout()
         self.scroll_test_button = QPushButton("运行测试校准")
@@ -486,13 +490,14 @@ class MainWindow(QMainWindow):
         protection_form = QFormLayout(protection)
         protection_form.setHorizontalSpacing(16)
         protection_form.setVerticalSpacing(10)
+        protection_form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         self.min_free_space_gb = QDoubleSpinBox()
         self.min_free_space_gb.setRange(1.0, 1024.0)
         self.min_free_space_gb.setDecimals(1)
         self.min_free_space_gb.setSingleStep(1.0)
         self.min_free_space_gb.setValue(10.0)
         self.min_free_space_gb.setSuffix(" GB")
-        self._add_form_row_with_hint(
+        self._add_form_row_with_side_hint(
             protection_form,
             "至少保留磁盘空间（GB）",
             self.min_free_space_gb,
@@ -518,7 +523,7 @@ class MainWindow(QMainWindow):
         stats = self._section("采集状态")
         stats_layout = QGridLayout(stats)
         self.capture_state = QLabel("未开始")
-        self.capture_count = QLabel("0")
+        self.capture_count = QLabel("0 张，共计 0 MB")
         self.capture_output = QLabel("未生成")
         self.capture_output.setTextInteractionFlags(Qt.TextSelectableByMouse)
         stats_layout.addWidget(QLabel("状态"), 0, 0)
@@ -569,6 +574,24 @@ class MainWindow(QMainWindow):
         widget.setToolTip(hint)
         form.addRow(label, widget)
         form.addRow("", self._hint(hint))
+
+    def _add_form_row_with_side_hint(self, form: QFormLayout, label: str, widget: QWidget, hint: str) -> None:
+        widget.setToolTip(hint)
+        widget.setMinimumWidth(240)
+        widget.setMaximumWidth(340)
+        row = QWidget()
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(14)
+        hint_label = self._hint(hint)
+        hint_label.setMinimumWidth(260)
+        row_layout.addWidget(widget, 0)
+        row_layout.addWidget(hint_label, 1)
+        form.addRow(label, row)
+
+    def _set_advanced_params_visible(self, checked: bool) -> None:
+        if hasattr(self, "advanced_params_content"):
+            self.advanced_params_content.setVisible(checked)
 
     def _preview_label(self, text: str) -> QLabel:
         label = QLabel(text)
@@ -853,7 +876,7 @@ class MainWindow(QMainWindow):
             return
         self.settings = self._settings_payload(calibrated=calibrated)
         write_settings(self.settings)
-        self.capture_count.setText("0")
+        self.capture_count.setText("0 张，共计 0 MB")
         self.capture_state.setText("采集中，按 Ctrl+Alt+S 停止，当前轮完成后结束")
         self.status_banner.setText("采集中，按 Ctrl+Alt+S 停止。触发后会完成当前轮再结束，GUI 停止按钮仅作为辅助。")
         self.sidebar.setCurrentRow(3)
@@ -872,7 +895,10 @@ class MainWindow(QMainWindow):
         if event.kind == "log":
             self.log_view.append(event.message)
         elif event.kind == "screenshot_saved":
-            self.capture_count.setText(str(data.get("saved_index", "")))
+            saved_index = data.get("saved_index", "")
+            self.capture_count.setText(
+                f"{saved_index} 张，共计 {self._format_file_size(data.get('total_saved_size_bytes'))}"
+            )
             self.capture_state.setText("采集中，按 Ctrl+Alt+S 停止，当前轮完成后结束")
         elif event.kind == "window_selected":
             self.log_view.append(event.message)
