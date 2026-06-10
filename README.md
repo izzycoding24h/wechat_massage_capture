@@ -1,0 +1,2 @@
+# wechat_massage_capture
+该用具用于自动滚动截图微信聊天记录
