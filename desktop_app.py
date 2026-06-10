@@ -17,6 +17,7 @@ from PySide6.QtCore import QDate, QObject, QSize, Qt, QThread, QUrl, Signal, Slo
 from PySide6.QtGui import QDesktopServices, QFont, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QDateEdit,
     QFileDialog,
@@ -357,14 +358,12 @@ class MainWindow(QMainWindow):
         )
         page.layout().addWidget(params)
 
-        advanced = QGroupBox("高级参数")
-        advanced.setCheckable(True)
-        advanced.setChecked(False)
-        advanced_layout = QVBoxLayout(advanced)
-        advanced_layout.setContentsMargins(14, 18, 14, 14)
-        self.advanced_params_content = QWidget()
-        advanced_layout.addWidget(self.advanced_params_content)
-        advanced_form = QFormLayout(self.advanced_params_content)
+        self.advanced_params_toggle = QCheckBox("高级参数")
+        self.advanced_params_toggle.setObjectName("advancedToggle")
+        page.layout().addWidget(self.advanced_params_toggle)
+
+        self.advanced_params_box = self._section("高级参数设置")
+        advanced_form = QFormLayout(self.advanced_params_box)
         advanced_form.setHorizontalSpacing(16)
         advanced_form.setVerticalSpacing(12)
         advanced_form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
@@ -432,9 +431,9 @@ class MainWindow(QMainWindow):
             self.stable_limit,
             "连续多次画面变化很小时自动结束。太低可能提前停止，太高会多做重复尝试。",
         )
-        self.advanced_params_content.setVisible(False)
-        advanced.toggled.connect(self._set_advanced_params_visible)
-        page.layout().addWidget(advanced)
+        self.advanced_params_box.setVisible(False)
+        self.advanced_params_toggle.toggled.connect(self._set_advanced_params_visible)
+        page.layout().addWidget(self.advanced_params_box)
 
         actions = QHBoxLayout()
         self.scroll_test_button = QPushButton("运行测试校准")
@@ -590,8 +589,8 @@ class MainWindow(QMainWindow):
         form.addRow(label, row)
 
     def _set_advanced_params_visible(self, checked: bool) -> None:
-        if hasattr(self, "advanced_params_content"):
-            self.advanced_params_content.setVisible(checked)
+        if hasattr(self, "advanced_params_box"):
+            self.advanced_params_box.setVisible(checked)
 
     def _preview_label(self, text: str) -> QLabel:
         label = QLabel(text)
@@ -613,6 +612,11 @@ class MainWindow(QMainWindow):
             QLabel#bodyText { color: #485963; line-height: 1.35; }
             QLabel#hintText { color: #5e6d77; line-height: 1.35; font-size: 12px; }
             QLabel#stepHeading { color: #202a31; font-weight: 700; }
+            QCheckBox#advancedToggle {
+                color: #202a31;
+                font-weight: 600;
+                padding: 8px 0 2px 2px;
+            }
             QLabel#statusBanner {
                 background: #e8f5f3;
                 color: #0f5f58;
