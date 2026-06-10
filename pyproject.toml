@@ -1,0 +1,26 @@
+[project]
+name = "wechat-message-capture"
+version = "1.5.0"
+description = "Semi-automated Windows WeChat group screenshot capture with manifests and SHA256 verification."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "pyautogui>=0.9.54",
+  "pygetwindow>=0.0.9",
+  "pywinauto>=0.6.8",
+  "mss>=9.0.1",
+  "Pillow>=10.0.0",
+  "keyboard>=0.13.5",
+]
+
+[project.optional-dependencies]
+dev = [
+  "ruff>=0.11.0",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
