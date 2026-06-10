@@ -926,14 +926,29 @@ def verify_evidence_dir(path: str | Path) -> dict[str, Any]:
     }
 
 
-def install_stop_hotkey(hotkey: str, stop_event: threading.Event, logger: logging.Logger) -> Any | None:
+def install_stop_hotkey(
+    hotkey: str,
+    stop_event: threading.Event,
+    logger: logging.Logger,
+    callback: EventCallback | None = None,
+) -> Any | None:
+    def request_stop_from_hotkey() -> None:
+        stop_event.set()
+        emit_event(
+            callback,
+            "stop_requested",
+            f"Stop requested by hotkey: {hotkey}",
+            source="hotkey",
+            hotkey=hotkey,
+        )
+
     try:
         import keyboard
     except Exception as exc:
         logger.warning("Global hotkey disabled because the keyboard package is unavailable: %s", exc)
         return None
     try:
-        keyboard.add_hotkey(hotkey, lambda: stop_event.set())
+        keyboard.add_hotkey(hotkey, request_stop_from_hotkey)
         logger.info("Installed global stop hotkey: %s", hotkey)
         return keyboard
     except Exception as exc:
@@ -1477,7 +1492,11 @@ def run_from_args(
         pyautogui.FAILSAFE = True
         set_windows_dpi_awareness(logger)
 
-        keyboard_module = None if (args.diagnose_capture or args.scroll_test) else install_stop_hotkey(args.hotkey, active_stop_event, logger)
+        keyboard_module = (
+            None
+            if (args.diagnose_capture or args.scroll_test)
+            else install_stop_hotkey(args.hotkey, active_stop_event, logger, callback)
+        )
 
         window = find_capture_window(gw, args.group_name, logger)
         selected_title = window.title

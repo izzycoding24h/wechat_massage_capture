@@ -45,10 +45,13 @@ WechatMessageCapture.exe
 
 1. 双击 `SETUP-WINDOWS.bat` 安装依赖。
 2. 双击 `RUN-DESKTOP.bat` 打开桌面应用。
-3. 在 `准备` 页面输入群名、起止日期和截图保存目录。
-4. 在 `校准测试` 页面调整 `重叠比例`、`固定步数`、`每步滚轮力度`、`截图间隔秒`，先运行校准测试。
-5. 确认 before/after 重叠合适后，点击 `保存当前配置`。
-6. 在 `正式采集` 页面点击 `开始正式采集`。
+3. 先阅读 `首页`，确认工具用途、三步流程和停止规则。
+4. 在 `第一步 准备` 页面输入群名、起止日期和截图保存目录。
+5. 在 `第二步 测试校准` 页面调整 `重叠比例`、`固定步数`、`每步滚轮力度`、`截图间隔秒`，先运行测试校准。
+6. 确认 before/after 重叠合适后，点击 `保存当前配置`。
+7. 在 `第三步 正式采集` 页面点击 `开始正式采集`。
+
+不同显示器宽高、DPI、微信窗口大小都会影响滚动幅度。正式采集前必须先做测试校准，否则可能出现相邻截图重叠不足、内容遗漏或截图效果不好。
 
 正式采集时微信窗口会反复置前、点击和滚动，所以不要依赖鼠标切回桌面应用停止。主停止方式是全局快捷键：
 
@@ -57,6 +60,9 @@ Ctrl+Alt+S
 ```
 
 看到聊天内容滚动到起始日期附近时，按 `Ctrl+Alt+S` 停止。界面里的 `辅助停止` 按钮只是兜底。
+
+按下 `Ctrl+Alt+S` 后不会瞬间停在当前画面，程序会完成当前轮截图或滚动动作，然后写入 `manifest.csv`、`run.json` 和 `sha256sums.txt` 后结束。
+桌面应用收到快捷键后，会在界面顶部提示“正在结束中”。
 
 桌面版默认值：
 
@@ -92,14 +98,14 @@ Windows 打包，在构建电脑上执行一次即可：
 - `capture_wechat_group.py`：主程序，负责窗口截图、滚动、去重、清单和哈希。
 - `capture_core.py`：桌面版和 CLI 共用的采集核心服务。
 - `desktop_app.py`：PySide6 桌面应用入口。
-- `verify_hashes.py`：复验输出目录里的 `sha256sums.txt`。
+- `verify_hashes.py`：命令行兼容工具，用于高级复验输出目录里的 `sha256sums.txt`。
 - `SETUP-WINDOWS.bat`：Windows 一键创建虚拟环境并安装依赖。
 - `RUN-DESKTOP.bat`：源码环境下启动桌面应用。
 - `RUN-WINDOWS.bat`：正式采集入口。
 - `RUN-SAMPLE-30.bat`：最多保留 30 张截图的样本入口。
 - `RUN-SCROLL-TEST.bat`：只测试一次滚动和重叠估算。
 - `RUN-DIAGNOSTICS.bat`：只测试截图后端，排查黑屏。
-- `VERIFY-WINDOWS.bat`：Windows 复验哈希入口。
+- `VERIFY-WINDOWS.bat`：Windows 命令行兼容复验入口，不属于桌面应用主流程。
 - `build_windows.ps1`：PyInstaller 打包脚本。
 - `installer/WechatMessageCapture.iss`：Inno Setup 安装包脚本。
 - `requirements.txt` / `pyproject.toml`：依赖和项目元数据。
@@ -236,9 +242,9 @@ Windows 打包，在构建电脑上执行一次即可：
 - `capture.log`：运行日志。
 - `sha256sums.txt`：输出目录内证据文件的 SHA256 清单。
 
-## 复验哈希
+## 命令行兼容工具
 
-在同一工具目录双击 `VERIFY-WINDOWS.bat`，输入证据输出目录。也可以命令行运行：
+桌面应用主流程不需要手动做哈希检查。采集完成后仍会自动生成 `sha256sums.txt`；高级用户或排查问题时，可以在同一工具目录双击 `VERIFY-WINDOWS.bat`，输入证据输出目录。也可以命令行运行：
 
 ```powershell
 .venv\Scripts\python verify_hashes.py D:\wechat-evidence\moha

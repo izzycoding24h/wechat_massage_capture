@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMainWindow,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QSizePolicy,
     QSpinBox,
@@ -50,7 +51,6 @@ from capture_core import (
     run_capture,
     run_diagnostics,
     run_scroll_test,
-    verify_evidence_dir,
 )
 
 
@@ -127,22 +127,6 @@ class CaptureWorker(QObject):
             self.failed.emit(str(exc), traceback.format_exc())
 
 
-class VerifyWorker(QObject):
-    finished = Signal(object)
-    failed = Signal(str, str)
-
-    def __init__(self, evidence_dir: str) -> None:
-        super().__init__()
-        self.evidence_dir = evidence_dir
-
-    @Slot()
-    def run(self) -> None:
-        try:
-            self.finished.emit(verify_evidence_dir(self.evidence_dir))
-        except Exception as exc:
-            self.failed.emit(str(exc), traceback.format_exc())
-
-
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -152,7 +136,7 @@ class MainWindow(QMainWindow):
         self.last_scroll_result: dict[str, Any] | None = None
         self.last_output_dir = ""
         self.worker_thread: QThread | None = None
-        self.worker: CaptureWorker | VerifyWorker | None = None
+        self.worker: CaptureWorker | None = None
 
         self._build_ui()
         self._load_settings()
@@ -167,7 +151,7 @@ class MainWindow(QMainWindow):
         self.sidebar = QListWidget()
         self.sidebar.setObjectName("sidebar")
         self.sidebar.setFixedWidth(188)
-        for label in ("准备", "校准测试", "正式采集", "复验哈希"):
+        for label in ("首页", "第一步 准备", "第二步 测试校准", "第三步 正式采集"):
             item = QListWidgetItem(label)
             item.setSizeHint(QSize(160, 44))
             self.sidebar.addItem(item)
@@ -179,7 +163,7 @@ class MainWindow(QMainWindow):
         content_layout.setContentsMargins(28, 24, 28, 24)
         content_layout.setSpacing(16)
 
-        self.status_banner = QLabel("就绪。先打开微信目标群，然后填写参数。")
+        self.status_banner = QLabel("请先阅读首页流程，再按步骤完成准备、测试校准和正式采集。")
         self.status_banner.setObjectName("statusBanner")
         self.status_banner.setWordWrap(True)
         content_layout.addWidget(self.status_banner)
@@ -188,16 +172,66 @@ class MainWindow(QMainWindow):
         content_layout.addWidget(self.stack, 1)
         shell.addWidget(content, 1)
 
+        self.stack.addWidget(self._build_home_page())
         self.stack.addWidget(self._build_prepare_page())
         self.stack.addWidget(self._build_calibration_page())
         self.stack.addWidget(self._build_capture_page())
-        self.stack.addWidget(self._build_verify_page())
         self.setCentralWidget(root)
         self.sidebar.setCurrentRow(0)
 
+    def _build_home_page(self) -> QWidget:
+        page = self._page()
+        page.layout().addWidget(self._title("首页"))
+
+        intro = QLabel(
+            "这个工具用于自动保存已经打开的微信桌面版聊天窗口截图。"
+            "它不会读取微信数据库，也不会自动判断聊天日期；你需要先打开目标群并确认窗口内容。"
+        )
+        intro.setObjectName("bodyText")
+        intro.setWordWrap(True)
+        page.layout().addWidget(intro)
+
+        flow = self._section("使用流程")
+        flow_layout = QGridLayout(flow)
+        flow_layout.setHorizontalSpacing(18)
+        flow_layout.setVerticalSpacing(12)
+        steps = (
+            ("第一步 准备", "打开目标微信群，填写群名、起止日期和截图保存目录。"),
+            ("第二步 测试校准", "运行一次测试，查看 before/after 缩略图，确认滚动幅度和截图重叠。"),
+            ("第三步 正式采集", "开始后微信会占用前台；看到起始日期附近时按 Ctrl+Alt+S 停止。"),
+        )
+        for row, (heading, text) in enumerate(steps):
+            heading_label = QLabel(heading)
+            heading_label.setObjectName("stepHeading")
+            text_label = QLabel(text)
+            text_label.setObjectName("bodyText")
+            text_label.setWordWrap(True)
+            flow_layout.addWidget(heading_label, row, 0)
+            flow_layout.addWidget(text_label, row, 1)
+        flow_layout.setColumnStretch(1, 1)
+        page.layout().addWidget(flow)
+
+        calibration_notice = QLabel(
+            "必须先测试校准再正式采集。不同显示器宽高、DPI、微信窗口大小都会影响滚动幅度；"
+            "跳过测试可能导致相邻截图重叠不足、内容遗漏或截图效果不好。"
+        )
+        calibration_notice.setObjectName("notice")
+        calibration_notice.setWordWrap(True)
+        page.layout().addWidget(calibration_notice)
+
+        stop_notice = QLabel(
+            "正式采集的主要停止方式是 Ctrl+Alt+S。触发后不会立刻停在当前画面，"
+            "程序会完成当前轮截图或滚动动作，再写入清单和哈希文件后结束。"
+        )
+        stop_notice.setObjectName("bodyText")
+        stop_notice.setWordWrap(True)
+        page.layout().addWidget(stop_notice)
+        page.layout().addStretch(1)
+        return page
+
     def _build_prepare_page(self) -> QWidget:
         page = self._page()
-        title = self._title("准备")
+        title = self._title("第一步 准备")
         body = QLabel("打开微信桌面版目标群，确认聊天停在最新消息位置。参数会用于校准和正式采集。")
         body.setObjectName("bodyText")
         body.setWordWrap(True)
@@ -248,7 +282,7 @@ class MainWindow(QMainWindow):
 
     def _build_calibration_page(self) -> QWidget:
         page = self._page()
-        page.layout().addWidget(self._title("校准测试"))
+        page.layout().addWidget(self._title("第二步 测试校准"))
         intro = QLabel("先测试当前电脑和微信窗口的滚动幅度。目标是相邻截图保留足够重叠，避免漏内容。")
         intro.setObjectName("bodyText")
         intro.setWordWrap(True)
@@ -330,7 +364,7 @@ class MainWindow(QMainWindow):
         page.layout().addLayout(grid)
 
         actions = QHBoxLayout()
-        self.scroll_test_button = QPushButton("运行校准测试")
+        self.scroll_test_button = QPushButton("运行测试校准")
         self.scroll_test_button.setObjectName("primaryButton")
         self.scroll_test_button.clicked.connect(self._start_scroll_test)
         self.diagnostics_button = QPushButton("截图诊断")
@@ -343,11 +377,22 @@ class MainWindow(QMainWindow):
         actions.addWidget(self.save_calibration_button)
         page.layout().addLayout(actions)
 
+        self.calibration_loading_text = QLabel("正在启动测试校准，请保持微信窗口可见。")
+        self.calibration_loading_text.setObjectName("bodyText")
+        self.calibration_loading_text.setVisible(False)
+        self.calibration_loading = QProgressBar()
+        self.calibration_loading.setObjectName("loadingBar")
+        self.calibration_loading.setRange(0, 0)
+        self.calibration_loading.setTextVisible(False)
+        self.calibration_loading.setVisible(False)
+        page.layout().addWidget(self.calibration_loading_text)
+        page.layout().addWidget(self.calibration_loading)
+
         result_box = self._section("测试结果")
         result_layout = QGridLayout(result_box)
         self.before_preview = self._preview_label("before.png")
         self.after_preview = self._preview_label("after.png")
-        self.calibration_summary = QLabel("还没有运行校准测试。")
+        self.calibration_summary = QLabel("还没有运行测试校准。")
         self.calibration_summary.setObjectName("bodyText")
         self.calibration_summary.setWordWrap(True)
         result_layout.addWidget(self.before_preview, 0, 0)
@@ -359,8 +404,11 @@ class MainWindow(QMainWindow):
 
     def _build_capture_page(self) -> QWidget:
         page = self._page()
-        page.layout().addWidget(self._title("正式采集"))
-        warning = QLabel("点击开始后，微信窗口会反复被置前并接收滚动操作。看到起始日期附近时，请按 Ctrl+Alt+S 停止。")
+        page.layout().addWidget(self._title("第三步 正式采集"))
+        warning = QLabel(
+            "点击开始后，微信窗口会反复被置前并接收滚动操作。看到起始日期附近时，请按 Ctrl+Alt+S 停止；"
+            "快捷键触发后会完成当前轮截图或滚动动作再结束。"
+        )
         warning.setObjectName("notice")
         warning.setWordWrap(True)
         page.layout().addWidget(warning)
@@ -400,33 +448,6 @@ class MainWindow(QMainWindow):
         page.layout().addWidget(self.log_view, 1)
         return page
 
-    def _build_verify_page(self) -> QWidget:
-        page = self._page()
-        page.layout().addWidget(self._title("复验哈希"))
-        intro = QLabel("选择包含 sha256sums.txt 的证据输出目录，检查文件是否和采集完成时一致。")
-        intro.setObjectName("bodyText")
-        intro.setWordWrap(True)
-        page.layout().addWidget(intro)
-
-        row = QHBoxLayout()
-        self.verify_dir = QLineEdit()
-        self.verify_dir.setPlaceholderText("选择证据目录")
-        choose = QPushButton("选择目录")
-        choose.clicked.connect(self._choose_verify_dir)
-        self.verify_button = QPushButton("开始复验")
-        self.verify_button.setObjectName("primaryButton")
-        self.verify_button.clicked.connect(self._start_verify)
-        row.addWidget(self.verify_dir, 1)
-        row.addWidget(choose)
-        row.addWidget(self.verify_button)
-        page.layout().addLayout(row)
-
-        self.verify_result = QTextEdit()
-        self.verify_result.setReadOnly(True)
-        self.verify_result.setObjectName("logView")
-        page.layout().addWidget(self.verify_result, 1)
-        return page
-
     def _page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -462,6 +483,7 @@ class MainWindow(QMainWindow):
             #sidebar::item:selected { background: #168f84; color: white; }
             QLabel#pageTitle { font-size: 24px; font-weight: 700; color: #202a31; }
             QLabel#bodyText { color: #485963; line-height: 1.35; }
+            QLabel#stepHeading { color: #202a31; font-weight: 700; }
             QLabel#statusBanner {
                 background: #e8f5f3;
                 color: #0f5f58;
@@ -527,6 +549,17 @@ class MainWindow(QMainWindow):
                 border-radius: 8px;
                 color: #596b76;
             }
+            QProgressBar#loadingBar {
+                min-height: 8px;
+                max-height: 8px;
+                border: 0;
+                border-radius: 4px;
+                background: #dfe7ec;
+            }
+            QProgressBar#loadingBar::chunk {
+                border-radius: 4px;
+                background: #168f84;
+            }
             """
         )
 
@@ -578,7 +611,7 @@ class MainWindow(QMainWindow):
         group_name = self.group_name.text().strip()
         if not group_name:
             QMessageBox.warning(self, "缺少群名", "请输入微信群名或窗口标题中的识别文字。")
-            self.sidebar.setCurrentRow(0)
+            self.sidebar.setCurrentRow(1)
             return None
         start = iso_from_qdate(self.start_date.date())
         end = iso_from_qdate(self.end_date.date())
@@ -607,15 +640,18 @@ class MainWindow(QMainWindow):
         if directory:
             self.output_dir.setText(directory)
 
-    def _choose_verify_dir(self) -> None:
-        directory = QFileDialog.getExistingDirectory(self, "选择证据目录", self.verify_dir.text() or self.last_output_dir or str(Path.home()))
-        if directory:
-            self.verify_dir.setText(directory)
-
     def _set_running(self, running: bool, mode: str = "") -> None:
-        for button in (self.scroll_test_button, self.diagnostics_button, self.start_capture_button, self.verify_button):
+        for button in (self.scroll_test_button, self.diagnostics_button, self.start_capture_button):
             button.setEnabled(not running)
         self.stop_button.setEnabled(running and mode == "capture")
+        calibration_running = running and mode == "scroll_test"
+        self.calibration_loading_text.setVisible(calibration_running)
+        self.calibration_loading.setVisible(calibration_running)
+        if calibration_running:
+            self.scroll_test_button.setText("测试校准运行中")
+            self.calibration_summary.setText("正在准备截图和滚动测试，通常需要几秒。请保持微信窗口可见。")
+        else:
+            self.scroll_test_button.setText("运行测试校准")
 
     def _start_worker(self, mode: str, config: CaptureConfig) -> None:
         if self.worker_thread is not None:
@@ -638,8 +674,9 @@ class MainWindow(QMainWindow):
         config = self._config_from_ui()
         if config is None:
             return
-        self.status_banner.setText("正在运行校准测试。请不要操作微信窗口。")
-        self.log_view.append("开始校准测试")
+        self.status_banner.setText("正在运行测试校准。请不要操作微信窗口。")
+        self.sidebar.setCurrentRow(2)
+        self.log_view.append("开始测试校准")
         self._start_worker("scroll_test", config)
 
     def _start_diagnostics(self) -> None:
@@ -654,18 +691,22 @@ class MainWindow(QMainWindow):
         if config is None:
             return
         calibrated = bool(self.settings.get("calibrated"))
-        message = "开始后微信会占用前台并自动滚动。看到起始日期附近时，请按 Ctrl+Alt+S 停止。"
+        message = (
+            "开始后微信会占用前台并自动滚动。\n\n"
+            "看到起始日期附近时，请按 Ctrl+Alt+S 停止。快捷键触发后不会立刻停在当前画面，"
+            "程序会完成当前轮截图或滚动动作，随后写入清单和哈希文件再结束。"
+        )
         if not calibrated:
-            message += "\n\n当前没有保存过校准配置，建议先运行校准测试。仍要继续吗？"
+            message += "\n\n当前没有保存过测试校准配置，建议先运行测试校准。仍要继续吗？"
         reply = QMessageBox.question(self, "确认开始采集", message, QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if reply != QMessageBox.Yes:
             return
         self.settings = self._settings_payload(calibrated=calibrated)
         write_settings(self.settings)
         self.capture_count.setText("0")
-        self.capture_state.setText("采集中，按 Ctrl+Alt+S 停止")
-        self.status_banner.setText("采集中，按 Ctrl+Alt+S 停止。GUI 停止按钮仅作为辅助。")
-        self.sidebar.setCurrentRow(2)
+        self.capture_state.setText("采集中，按 Ctrl+Alt+S 停止，当前轮完成后结束")
+        self.status_banner.setText("采集中，按 Ctrl+Alt+S 停止。触发后会完成当前轮再结束，GUI 停止按钮仅作为辅助。")
+        self.sidebar.setCurrentRow(3)
         self.log_view.clear()
         self.log_view.append("正式采集开始。主停止方式：Ctrl+Alt+S")
         self._start_worker("capture", config)
@@ -673,30 +714,8 @@ class MainWindow(QMainWindow):
     def _request_stop(self) -> None:
         if isinstance(self.worker, CaptureWorker):
             self.worker.stop()
-            self.status_banner.setText("已请求停止。等待当前截图或滚动动作结束。")
-            self.capture_state.setText("正在停止")
-
-    def _start_verify(self) -> None:
-        directory = self.verify_dir.text().strip()
-        if not directory:
-            QMessageBox.warning(self, "缺少目录", "请选择包含 sha256sums.txt 的证据目录。")
-            return
-        if self.worker_thread is not None:
-            QMessageBox.information(self, "正在运行", "已有任务正在运行，请等待完成。")
-            return
-        self._set_running(True)
-        self.verify_result.clear()
-        self.verify_result.append("开始复验")
-        self.worker_thread = QThread()
-        self.worker = VerifyWorker(directory)
-        self.worker.moveToThread(self.worker_thread)
-        self.worker_thread.started.connect(self.worker.run)
-        self.worker.finished.connect(self._handle_verify_finished)
-        self.worker.failed.connect(self._handle_worker_failed)
-        self.worker.finished.connect(self.worker_thread.quit)
-        self.worker.failed.connect(self.worker_thread.quit)
-        self.worker_thread.finished.connect(self._cleanup_worker)
-        self.worker_thread.start()
+            self.status_banner.setText("已请求停止。正在完成当前轮截图或滚动动作，然后写入清单和哈希。")
+            self.capture_state.setText("正在停止，等待当前轮完成")
 
     def _handle_capture_event(self, event: CaptureEvent) -> None:
         data = event.data or {}
@@ -704,9 +723,14 @@ class MainWindow(QMainWindow):
             self.log_view.append(event.message)
         elif event.kind == "screenshot_saved":
             self.capture_count.setText(str(data.get("saved_index", "")))
-            self.capture_state.setText("采集中，按 Ctrl+Alt+S 停止")
+            self.capture_state.setText("采集中，按 Ctrl+Alt+S 停止，当前轮完成后结束")
         elif event.kind == "window_selected":
             self.log_view.append(event.message)
+        elif event.kind == "stop_requested":
+            hotkey = data.get("hotkey", "Ctrl+Alt+S")
+            self.status_banner.setText(f"已收到 {hotkey}，正在结束中。当前轮完成后会写入清单和哈希。")
+            self.capture_state.setText("正在结束中，等待当前轮完成")
+            self.log_view.append(f"已收到停止快捷键：{hotkey}")
         elif event.kind == "finished":
             self.capture_state.setText(f"已结束：{data.get('stop_reason', '')}")
         elif event.message:
@@ -715,7 +739,6 @@ class MainWindow(QMainWindow):
     def _handle_worker_finished(self, result: dict[str, Any]) -> None:
         self.last_output_dir = result.get("output_dir", "")
         self.capture_output.setText(self.last_output_dir or "未生成")
-        self.verify_dir.setText(self.last_output_dir)
         stop_reason = result.get("stop_reason", "")
         self.status_banner.setText(f"任务完成：{stop_reason}")
         self.log_view.append(f"任务完成：{stop_reason}")
@@ -726,29 +749,10 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "诊断完成", f"诊断图片已保存到：\n{self.last_output_dir}")
         self._set_running(False)
 
-    def _handle_verify_finished(self, result: dict[str, Any]) -> None:
-        if result.get("ok"):
-            self.verify_result.append(f"OK：已复验 {result.get('checked', 0)} 个文件。")
-        else:
-            self.verify_result.append("FAILED")
-            for failure in result.get("failures", []):
-                self.verify_result.append(f"  {failure}")
-        extras = result.get("extras", [])
-        if extras:
-            self.verify_result.append(f"WARNING：有 {len(extras)} 个额外文件未列入 sha256sums.txt。")
-            for relpath in extras[:20]:
-                self.verify_result.append(f"  extra: {relpath}")
-        self.status_banner.setText("复验完成。")
-        self._set_running(False)
-
     def _handle_worker_failed(self, message: str, detail: str) -> None:
         self.status_banner.setText("任务失败。请查看日志。")
-        if self.stack.currentIndex() == 3:
-            self.verify_result.append("ERROR: " + message)
-            self.verify_result.append(detail)
-        else:
-            self.log_view.append("ERROR: " + message)
-            self.log_view.append(detail)
+        self.log_view.append("ERROR: " + message)
+        self.log_view.append(detail)
         QMessageBox.critical(self, "任务失败", message)
         self._set_running(False)
 
@@ -776,7 +780,7 @@ class MainWindow(QMainWindow):
         self.calibration_summary.setText(
             f"估算移动比例：{movement:.1%}，目标移动：{target:.1%}。判断：{verdict}。"
         )
-        self.sidebar.setCurrentRow(1)
+        self.sidebar.setCurrentRow(2)
 
     def _set_preview(self, label: QLabel, path: Path) -> None:
         if not path.exists():
