@@ -26,9 +26,17 @@ from typing import Any, Callable, Iterable
 
 SCRIPT_VERSION = "1.5.0"
 DEFAULT_END_DATE = dt.date.today().isoformat()
+BYTES_PER_MB = 1024 * 1024
+BYTES_PER_GB = 1024 * 1024 * 1024
 WECHAT_TITLE_HINTS = ("微信", "wechat", "weixin")
 CAPTURE_METHODS = ("imagegrab", "pyautogui", "mss-full", "mss-window")
 SCROLL_MODES = ("adaptive", "wheel", "pageup", "drag")
+CAPTURES_DIR = "截图"
+RECORDS_DIR = "运行记录"
+DUPLICATES_DIR = "重复截图"
+SCROLL_TEST_DIR = "测试校准图片"
+DIAGNOSTICS_DIR = "诊断图片"
+TMP_DIR = "_tmp"
 EventCallback = Callable[["CaptureEvent"], None]
 MANIFEST_FIELDS = [
     "attempt",
@@ -94,6 +102,7 @@ class CaptureConfig:
     end_date: str = DEFAULT_END_DATE
     output_dir: str = ""
     max_screenshots: int = 0
+    min_free_space_gb: float = 10.0
     interval: float = 0.2
     scroll_clicks: int = 30
     scroll_mode: str = "adaptive"
@@ -142,11 +151,11 @@ class CaptureAbort(RuntimeError):
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Capture visible screenshots from an already-open WeChat group "
+            "Capture visible screenshots from an already-open WeChat chat "
             "window on Windows, scrolling upward through chat history."
         )
     )
-    parser.add_argument("--group-name", required=True, help="Target WeChat group name or identifying title text.")
+    parser.add_argument("--group-name", required=True, help="Target WeChat chat window title or identifying title text.")
     parser.add_argument("--start-date", required=True, help="Oldest date to capture, YYYY-MM-DD. Operator stops there.")
     parser.add_argument(
         "--end-date",
@@ -163,6 +172,12 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=0,
         help="Maximum main screenshots to keep. Use 0 for unlimited until hotkey/Ctrl+C/stable limit.",
+    )
+    parser.add_argument(
+        "--min-free-space-gb",
+        type=float,
+        default=10.0,
+        help="Stop formal capture when output disk free space drops below this reserve in GB. Use 0 to disable.",
     )
     parser.add_argument(
         "--interval",
@@ -398,6 +413,7 @@ def config_to_args(
         end_date=config.end_date,
         output_dir=config.output_dir,
         max_screenshots=config.max_screenshots,
+        min_free_space_gb=config.min_free_space_gb,
         interval=config.interval,
         scroll_clicks=config.scroll_clicks,
         scroll_mode=config.scroll_mode,
@@ -447,10 +463,77 @@ def make_output_dir(group_name: str, requested: str) -> Path:
         stamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
         output_dir = Path.cwd() / f"wechat_evidence_{safe_filename(group_name)}_{stamp}"
     output_dir.mkdir(parents=True, exist_ok=True)
-    (output_dir / "captures").mkdir(exist_ok=True)
-    (output_dir / "duplicates").mkdir(exist_ok=True)
-    (output_dir / "_tmp").mkdir(exist_ok=True)
+    (output_dir / RECORDS_DIR / TMP_DIR).mkdir(parents=True, exist_ok=True)
     return output_dir
+
+
+def _existing_disk_probe(path: Path) -> Path:
+    probe = path.expanduser()
+    while not probe.exists() and probe != probe.parent:
+        probe = probe.parent
+    if probe.exists():
+        return probe
+    return Path.cwd()
+
+
+def disk_space_snapshot(path: str | Path) -> dict[str, Any]:
+    probe = _existing_disk_probe(Path(path))
+    usage = shutil.disk_usage(probe)
+    return {
+        "checked_path": str(probe.resolve()),
+        "total_bytes": usage.total,
+        "used_bytes": usage.used,
+        "free_bytes": usage.free,
+        "total_gb": round(usage.total / BYTES_PER_GB, 3),
+        "used_gb": round(usage.used / BYTES_PER_GB, 3),
+        "free_gb": round(usage.free / BYTES_PER_GB, 3),
+    }
+
+
+def estimate_remaining_screenshots(
+    free_bytes: int,
+    min_free_space_gb: float,
+    reference_screenshot_size_bytes: int,
+) -> int | None:
+    if reference_screenshot_size_bytes <= 0:
+        return None
+    reserve_bytes = max(0, int(float(min_free_space_gb) * BYTES_PER_GB))
+    usable_bytes = max(0, int(free_bytes) - reserve_bytes)
+    return usable_bytes // reference_screenshot_size_bytes
+
+
+def disk_space_below_limit(snapshot: dict[str, Any], min_free_space_gb: float) -> bool:
+    if min_free_space_gb <= 0:
+        return False
+    return int(snapshot.get("free_bytes", 0)) < int(min_free_space_gb * BYTES_PER_GB)
+
+
+def emit_low_disk_space_event(
+    callback: EventCallback | None,
+    snapshot: dict[str, Any],
+    min_free_space_gb: float,
+) -> None:
+    emit_event(
+        callback,
+        "low_disk_space",
+        "Disk free space is below the configured reserve.",
+        free_bytes=snapshot.get("free_bytes", 0),
+        free_gb=snapshot.get("free_gb", 0),
+        min_free_space_gb=min_free_space_gb,
+        checked_path=snapshot.get("checked_path", ""),
+    )
+
+
+def records_dir(output_dir: Path) -> Path:
+    path = output_dir / RECORDS_DIR
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def tmp_dir(output_dir: Path) -> Path:
+    path = records_dir(output_dir) / TMP_DIR
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def configure_logging(output_dir: Path) -> logging.Logger:
@@ -459,7 +542,7 @@ def configure_logging(output_dir: Path) -> logging.Logger:
     logger.handlers.clear()
     formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
 
-    log_path = output_dir / "capture.log"
+    log_path = records_dir(output_dir) / "capture.log"
     file_handler = logging.FileHandler(log_path, encoding="utf-8")
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
@@ -792,15 +875,16 @@ def _run_capture_diagnostics(
     output_dir: Path,
     logger: logging.Logger,
 ) -> dict[str, Any]:
-    diagnostics_dir = output_dir / "diagnostics"
-    diagnostics_dir.mkdir(exist_ok=True)
+    diagnostics_dir = output_dir / DIAGNOSTICS_DIR
+    diagnostics_dir.mkdir(parents=True, exist_ok=True)
+    diagnostics_stamp = dt.datetime.now().strftime("%Y%m%d_%H%M")
     region = window_region(window)
     results: list[dict[str, Any]] = []
 
     print("")
     print("Running one-shot capture diagnostics. No scrolling will happen.")
     for method in CAPTURE_METHODS:
-        destination = diagnostics_dir / f"{method}.png"
+        destination = diagnostics_dir / f"诊断图片_{diagnostics_stamp}_{method}.png"
         record: dict[str, Any] = {
             "method": method,
             "relative_path": relative_to_output(destination, output_dir),
@@ -834,6 +918,8 @@ def _run_capture_diagnostics(
 
     payload = {
         "created_at": now_iso(),
+        "diagnostics_dir": relative_to_output(diagnostics_dir, output_dir),
+        "image_prefix": f"诊断图片_{diagnostics_stamp}",
         "window_title": window.title,
         "region": region,
         "methods": results,
@@ -843,7 +929,7 @@ def _run_capture_diagnostics(
             "Avoid running inside a hidden remote desktop session; keep the Windows desktop unlocked and visible.",
         ],
     }
-    write_json(diagnostics_dir / "diagnostics.json", payload)
+    write_json(records_dir(output_dir) / "diagnostics.json", payload)
     return payload
 
 
@@ -866,11 +952,11 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
 
 
 def write_sha256sums(output_dir: Path) -> Path:
-    sums_path = output_dir / "sha256sums.txt"
+    sums_path = records_dir(output_dir) / "sha256sums.txt"
     candidates = sorted(
         p
         for p in output_dir.rglob("*")
-        if p.is_file() and p.name != "sha256sums.txt" and "_tmp" not in p.relative_to(output_dir).parts
+        if p.is_file() and p != sums_path and TMP_DIR not in p.relative_to(output_dir).parts
     )
     with sums_path.open("w", encoding="utf-8") as handle:
         for path in candidates:
@@ -881,6 +967,8 @@ def write_sha256sums(output_dir: Path) -> Path:
 def verify_evidence_dir(path: str | Path) -> dict[str, Any]:
     evidence_dir = Path(path).expanduser().resolve()
     sums_path = evidence_dir / "sha256sums.txt"
+    if not sums_path.exists():
+        sums_path = evidence_dir / RECORDS_DIR / "sha256sums.txt"
     if not sums_path.exists():
         return {
             "ok": False,
@@ -914,7 +1002,7 @@ def verify_evidence_dir(path: str | Path) -> dict[str, Any]:
     current_files = {
         p.resolve()
         for p in evidence_dir.rglob("*")
-        if p.is_file() and p.name != "sha256sums.txt" and "_tmp" not in p.relative_to(evidence_dir).parts
+        if p.is_file() and p != sums_path and TMP_DIR not in p.relative_to(evidence_dir).parts
     }
     extras = sorted(path.relative_to(evidence_dir).as_posix() for path in current_files - listed_paths)
     return {
@@ -1172,7 +1260,7 @@ def advance_to_older(
             ImageStat,
             ImageGrab,
             region,
-            output_dir / "_tmp",
+            tmp_dir(output_dir),
             attempt * 1000 + step_index,
             args.capture_method,
             logger,
@@ -1222,8 +1310,8 @@ def _run_scroll_test_impl(
     args: argparse.Namespace,
     logger: logging.Logger,
 ) -> dict[str, Any]:
-    test_dir = output_dir / "scroll-test"
-    test_dir.mkdir(exist_ok=True)
+    test_dir = output_dir / SCROLL_TEST_DIR
+    test_dir.mkdir(parents=True, exist_ok=True)
     region = window_region(window)
     before_path, before_method, before_mean, before_stddev, before_blank = capture_window_with_fallback(
         pyautogui,
@@ -1232,7 +1320,7 @@ def _run_scroll_test_impl(
         ImageStat,
         ImageGrab,
         region,
-        output_dir / "_tmp",
+        tmp_dir(output_dir),
         1,
         args.capture_method,
         logger,
@@ -1280,13 +1368,23 @@ def _run_scroll_test_impl(
         ImageStat,
         ImageGrab,
         window_region(window),
-        output_dir / "_tmp",
+        tmp_dir(output_dir),
         2,
         args.capture_method,
         logger,
     )
     after_dest = test_dir / "after.png"
     after_path.replace(after_dest)
+
+    before_size_bytes = before_dest.stat().st_size
+    after_size_bytes = after_dest.stat().st_size
+    reference_size_bytes = int(round((before_size_bytes + after_size_bytes) / 2))
+    disk_space = disk_space_snapshot(output_dir)
+    estimated_remaining = estimate_remaining_screenshots(
+        int(disk_space["free_bytes"]),
+        args.min_free_space_gb,
+        reference_size_bytes,
+    )
 
     before_signature = image_signature(Image, before_dest)
     after_signature = image_signature(Image, after_dest)
@@ -1308,11 +1406,13 @@ def _run_scroll_test_impl(
         "adaptive_max_steps": args.adaptive_max_steps,
         "adaptive_fixed_steps": args.adaptive_fixed_steps,
         "adaptive_lock_after_first": args.adaptive_lock_after_first,
+        "min_free_space_gb": args.min_free_space_gb,
         "click_before_scroll": not args.no_click_before_scroll,
         "scroll_result": scroll_result,
         "capture_method_requested": args.capture_method,
         "before": {
             "relative_path": relative_to_output(before_dest, output_dir),
+            "size_bytes": before_size_bytes,
             "capture_method": before_method,
             "sha256": hash_file(before_dest),
             "mean_luma": round(before_mean, 2),
@@ -1321,6 +1421,7 @@ def _run_scroll_test_impl(
         },
         "after": {
             "relative_path": relative_to_output(after_dest, output_dir),
+            "size_bytes": after_size_bytes,
             "capture_method": after_method,
             "sha256": hash_file(after_dest),
             "mean_luma": round(after_mean, 2),
@@ -1331,6 +1432,14 @@ def _run_scroll_test_impl(
         "estimated_shift_ratio": round(movement["shift_ratio"], 6),
         "estimated_signed_shift_ratio": round(movement["signed_shift_ratio"], 6),
         "estimated_match_score": round(movement["score"], 6),
+        "reference_screenshot_size_bytes": reference_size_bytes,
+        "reference_screenshot_size_mb": round(reference_size_bytes / BYTES_PER_MB, 3),
+        "disk_space": disk_space,
+        "estimated_remaining_screenshots": estimated_remaining,
+        "capacity_estimate_note": (
+            "Reference only. Actual screenshot size changes with chat content, images, stickers, "
+            "and window size."
+        ),
         "looks_moved": moved,
         "next_steps": [
             "If movement is too small, increase --scroll-clicks to 50 or --scroll-bursts to 5.",
@@ -1339,7 +1448,7 @@ def _run_scroll_test_impl(
             "If the direction is wrong, use a negative --scroll-clicks value for wheel mode.",
         ],
     }
-    write_json(test_dir / "scroll-test.json", result)
+    write_json(records_dir(output_dir) / "scroll-test.json", result)
     print(f"Scroll-test diff: {diff:.6f}" if diff is not None else "Scroll-test diff: n/a")
     print(
         "Estimated content movement: "
@@ -1351,9 +1460,9 @@ def _run_scroll_test_impl(
 
 
 def cleanup_tmp(output_dir: Path) -> None:
-    tmp_dir = output_dir / "_tmp"
-    if tmp_dir.exists():
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+    temporary_dir = records_dir(output_dir) / TMP_DIR
+    if temporary_dir.exists():
+        shutil.rmtree(temporary_dir, ignore_errors=True)
 
 
 def build_run_payload(
@@ -1364,6 +1473,8 @@ def build_run_payload(
     stop_reason: str,
     rows: list[CaptureRow],
     selected_title: str,
+    started_disk_space: dict[str, Any] | None = None,
+    finished_disk_space: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     saved_count = sum(1 for row in rows if row.saved)
     duplicate_count = sum(1 for row in rows if not row.saved and row.notes.startswith("duplicate"))
@@ -1384,6 +1495,9 @@ def build_run_payload(
         "duplicate_attempts": duplicate_count,
         "blank_warnings": blank_count,
         "max_screenshots": args.max_screenshots,
+        "min_free_space_gb": args.min_free_space_gb,
+        "disk_space_start": started_disk_space or {},
+        "disk_space_finish": finished_disk_space or {},
         "capture_method": args.capture_method,
         "capture_method_order": list(capture_method_sequence(args.capture_method)),
         "diagnose_capture": args.diagnose_capture,
@@ -1434,6 +1548,8 @@ def validate_capture_args(args: argparse.Namespace) -> None:
         raise CaptureAbort("start-date must not be later than end-date.")
     if args.max_screenshots < 0:
         raise CaptureAbort("max-screenshots must be 0 or a positive integer.")
+    if args.min_free_space_gb < 0:
+        raise CaptureAbort("min-free-space-gb must be 0 or a positive number.")
     if args.interval < 0:
         raise CaptureAbort("interval must be non-negative.")
     if args.stable_limit < 0:
@@ -1479,6 +1595,7 @@ def run_from_args(
         logger.addHandler(callback_handler)
 
     started_at = now_iso()
+    started_disk_space = disk_space_snapshot(output_dir)
     rows: list[CaptureRow] = []
     stop_reason = "unknown"
     selected_title = ""
@@ -1488,6 +1605,27 @@ def run_from_args(
     should_confirm = (not args.no_confirm) if require_confirmation is None else require_confirmation
 
     try:
+        if not args.diagnose_capture and not args.scroll_test and disk_space_below_limit(
+            started_disk_space,
+            args.min_free_space_gb,
+        ):
+            stop_reason = "low_disk_space"
+            logger.warning(
+                "Stopping before capture because free disk space %.3f GB is below configured reserve %.3f GB.",
+                started_disk_space["free_gb"],
+                args.min_free_space_gb,
+            )
+            emit_low_disk_space_event(callback, started_disk_space, args.min_free_space_gb)
+            return CaptureRunResult(
+                output_dir=str(output_dir),
+                stop_reason=stop_reason,
+                saved_screenshots=0,
+                attempts=0,
+                manifest_path=str(records_dir(output_dir) / "manifest.csv"),
+                run_json_path=str(records_dir(output_dir) / "run.json"),
+                sha256sums_path=str(records_dir(output_dir) / "sha256sums.txt"),
+            )
+
         pyautogui, gw, mss_module, Image, ImageStat, ImageGrab = load_capture_dependencies()
         pyautogui.FAILSAFE = True
         set_windows_dpi_awareness(logger)
@@ -1535,9 +1673,9 @@ def run_from_args(
                 stop_reason=stop_reason,
                 saved_screenshots=0,
                 attempts=0,
-                manifest_path=str(output_dir / "manifest.csv"),
-                run_json_path=str(output_dir / "run.json"),
-                sha256sums_path=str(output_dir / "sha256sums.txt"),
+                manifest_path=str(records_dir(output_dir) / "manifest.csv"),
+                run_json_path=str(records_dir(output_dir) / "run.json"),
+                sha256sums_path=str(records_dir(output_dir) / "sha256sums.txt"),
                 diagnostics_result=diagnostics_result,
             )
 
@@ -1560,9 +1698,9 @@ def run_from_args(
                 stop_reason=stop_reason,
                 saved_screenshots=0,
                 attempts=0,
-                manifest_path=str(output_dir / "manifest.csv"),
-                run_json_path=str(output_dir / "run.json"),
-                sha256sums_path=str(output_dir / "sha256sums.txt"),
+                manifest_path=str(records_dir(output_dir) / "manifest.csv"),
+                run_json_path=str(records_dir(output_dir) / "run.json"),
+                sha256sums_path=str(records_dir(output_dir) / "sha256sums.txt"),
                 scroll_test_result=scroll_test_result,
             )
 
@@ -1591,7 +1729,7 @@ def run_from_args(
                 ImageStat,
                 ImageGrab,
                 region,
-                output_dir / "_tmp",
+                tmp_dir(output_dir),
                 attempt,
                 args.capture_method,
                 logger,
@@ -1604,7 +1742,9 @@ def run_from_args(
             current_capture_path: Path
             if is_duplicate:
                 consecutive_duplicates += 1
-                duplicate_path = output_dir / "duplicates" / f"duplicate_attempt_{attempt:06d}.png"
+                duplicate_dir = records_dir(output_dir) / DUPLICATES_DIR
+                duplicate_dir.mkdir(parents=True, exist_ok=True)
+                duplicate_path = duplicate_dir / f"duplicate_attempt_{attempt:06d}.png"
                 tmp_path.replace(duplicate_path)
                 current_capture_path = duplicate_path
                 relpath = relative_to_output(duplicate_path, output_dir)
@@ -1640,7 +1780,9 @@ def run_from_args(
             else:
                 consecutive_duplicates = 0
                 saved_index += 1
-                capture_path = output_dir / "captures" / f"{saved_index:06d}.png"
+                capture_dir = output_dir / CAPTURES_DIR
+                capture_dir.mkdir(parents=True, exist_ok=True)
+                capture_path = capture_dir / f"{saved_index:06d}.png"
                 tmp_path.replace(capture_path)
                 current_capture_path = capture_path
                 relpath = relative_to_output(capture_path, output_dir)
@@ -1688,6 +1830,16 @@ def run_from_args(
                     attempt,
                     capture_method,
                 )
+            current_disk_space = disk_space_snapshot(output_dir)
+            if disk_space_below_limit(current_disk_space, args.min_free_space_gb):
+                stop_reason = "low_disk_space"
+                logger.warning(
+                    "Stopping because free disk space %.3f GB is below configured reserve %.3f GB.",
+                    current_disk_space["free_gb"],
+                    args.min_free_space_gb,
+                )
+                emit_low_disk_space_event(callback, current_disk_space, args.min_free_space_gb)
+                break
             if args.stable_limit and consecutive_duplicates >= args.stable_limit:
                 stop_reason = f"stable_window_limit:{args.stable_limit}"
                 logger.warning("Stopping after %s consecutive duplicate/stable attempts.", consecutive_duplicates)
@@ -1741,11 +1893,23 @@ def run_from_args(
         raise
     finally:
         finished_at = now_iso()
-        manifest_path = output_dir / "manifest.csv"
-        run_path = output_dir / "run.json"
-        sums_path = output_dir / "sha256sums.txt"
+        finished_disk_space = disk_space_snapshot(output_dir)
+        record_dir = records_dir(output_dir)
+        manifest_path = record_dir / "manifest.csv"
+        run_path = record_dir / "run.json"
+        sums_path = record_dir / "sha256sums.txt"
         write_manifest(manifest_path, rows)
-        run_payload = build_run_payload(args, output_dir, started_at, finished_at, stop_reason, rows, selected_title)
+        run_payload = build_run_payload(
+            args,
+            output_dir,
+            started_at,
+            finished_at,
+            stop_reason,
+            rows,
+            selected_title,
+            started_disk_space,
+            finished_disk_space,
+        )
         write_json(run_path, run_payload)
         cleanup_tmp(output_dir)
         logger.info("Wrote manifest: %s", manifest_path)
@@ -1767,7 +1931,7 @@ def run_from_args(
     print(f"Stop reason: {stop_reason}")
     print(f"Saved screenshots: {sum(1 for row in rows if row.saved)}")
     print(f"Output directory: {output_dir}")
-    print("Review manifest.csv and verify hashes with verify_hashes.py.")
+    print(f"Review screenshots in {CAPTURES_DIR}/ and records in {RECORDS_DIR}/.")
     return CaptureRunResult(
         output_dir=str(output_dir),
         stop_reason=stop_reason,
